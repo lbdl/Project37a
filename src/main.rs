@@ -24,6 +24,7 @@ fn config_dir() -> PathBuf {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::load(config_dir().join("oath_cli.toml"))?;
+
     //init tracing
     tracing_subscriber::fmt()
         .with_target(true)
@@ -36,7 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    //setup base config move this to yaml or something later
     let user = "mmsoft.mudit@gmail.com";
     let maxsoft = "from:*@maxsoft.sg AND after:2025/01/01 AND filename:pdf";
     let fedex = "from:thicc@fedex.com AND after:2025/01/01";
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::var("REFRESH").is_ok_and(|v| v == "1") {
         // Force token fetch/refresh
         println!("Refreshing....");
-        let _token = auth.force_refreshed_token(&["https://www.googleapis.com/auth/gmail.readonly"]).await?;
+        let _token = auth.token(&["https://www.googleapis.com/auth/gmail.readonly"]).await?;
     }
 
     let client = hyper_util::client::legacy::Client::builder(
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
     let fedex_msgs = filter::get_message_ids(&hub, fedex, user).await?;
 
-    // should add the user as a env or as a passed param
+    // TODO refactor the below to use the prefetch m ids from the filter mod
     let (_, msgs) = hub.users().messages_list(user)
         .q(maxsoft)
         .max_results(100)
@@ -121,16 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    // let (_, fedex_msgs) = hub.users().messages_list("mudit@mmsoftth.co")
-    //     .q("from:thicc@fedex.com")
-    //     .max_results(20)
-    //     .doit()
-    //     .await?;
-
-
-    // println!("MAXSOFT: {:?}", msgs.messages);
-    // println!("FEDEX: {:?}", fedex_msgs.messages);
+    //TODO given a vec<msg> store this somewhere for analysis
 
     Ok(())
 }
