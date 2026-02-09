@@ -22,10 +22,10 @@ pub async fn fetch_msgs(
         let payload = email.payload.as_ref().unwrap();
 
         let from = get_headers(payload.headers.as_ref(), "From");
-        info!(from = ?from, "mail From:");
-        // if let Some(msg) = &email{
-        //     info!(mail = ?email, "Fetched mail -> email:");
-        // }
+        let subj = get_headers(payload.headers.as_ref(), "Subject");
+        let to = get_headers(payload.headers.as_ref(), "To");
+        let date = get_headers(payload.headers.as_ref(), "Date");
+        info!(from = ?from, to = ?to, subj = ?subj, date = ?date,  "mail: ");
     }
     // return something
     Ok((1))
