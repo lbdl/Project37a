@@ -103,6 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
     let fedex_msgs = filter::get_message_ids(&hub, fedex, user).await?;
 
+
     // TODO refactor the below to use the prefetch m ids from the filter mod
     let (_, msgs) = hub.users().messages_list(user)
         .q(maxsoft)

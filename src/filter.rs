@@ -17,12 +17,12 @@ fn get_message_ids_recursive<'a>(
     user: &'a str,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error>>> + 'a>> {
 
-    let span = info_span!(
-        "get_message_ids",
-        user = %user,
-        query = %query,
-        has_page_token = page_token.is_some()
-    );
+    // let span = info_span!(
+    //     "get_message_ids",
+    //     user = %user,
+    //     query = %query,
+    //     has_page_token = page_token.is_some()
+    // );
 
     info!(user = %user, query = %query, has_page_token = page_token.is_some(), "Starting id fetch");
 
