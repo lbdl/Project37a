@@ -1,6 +1,7 @@
 mod config;
 mod filter;
 mod simplestore;
+mod simple_refresh;
 
 use google_gmail1::{api::Scope, Gmail};
 use yup_oauth2::{
@@ -13,8 +14,12 @@ use yup_oauth2::{
 use tracing_subscriber;
 use std::env;
 use std::path::PathBuf;
+use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy::connect::HttpConnector;
+use yup_oauth2::authenticator::Authenticator;
 use simplestore::SimpleTokenStore;
 use config::Config;
+use simple_refresh::manual_refresh;
 
 #[cfg(debug_assertions)]
 fn config_dir() -> PathBuf {
@@ -24,6 +29,9 @@ fn config_dir() -> PathBuf {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::load(config_dir().join("oath_cli.toml"))?;
+    let auth: Authenticator<HttpsConnector<HttpConnector>>;
+    let tok:String;
+    let ttl:i64;
 
     //init tracing
     tracing_subscriber::fmt()
@@ -41,6 +49,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let maxsoft = "from:*@maxsoft.sg AND after:2025/01/01 AND filename:pdf";
     let fedex = "from:thicc@fedex.com AND after:2025/01/01";
 
+
+
+    // handle manual refreshing we dont really need it but lets be complete
+    if env::var("REFRESH").is_ok_and(|v| v == "1") {
+        // Force token fetch/refresh
+        println!("Refreshing....");
+        let _token = manual_refresh(&cfg).await?;
+        tok = _token.access_token;
+        ttl = _token.expires_in;
+    } else {
+        tok = cfg.gmail.tokens.access_token;
+        ttl= 3599;
+    }
+
     let secret = ApplicationSecret {
         client_id: cfg.gmail.client_id,
         client_secret: cfg.gmail.client_secret,
@@ -54,23 +76,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create authenticator with your existing tokens
-    let auth = InstalledFlowAuthenticator::builder(
+    auth = InstalledFlowAuthenticator::builder(
         secret,
         InstalledFlowReturnMethod::HTTPRedirect
     )
         .with_storage(Box::new(SimpleTokenStore {
-            access_token: cfg.gmail.tokens.access_token,
+            access_token: tok,
             refresh_token: cfg.gmail.tokens.refresh_token,
-            expires_in: 3599,
+            expires_in: ttl,
         }))
         .build()
         .await?;
-
-    if env::var("REFRESH").is_ok_and(|v| v == "1") {
-        // Force token fetch/refresh
-        println!("Refreshing....");
-        let _token = auth.token(&["https://www.googleapis.com/auth/gmail.readonly"]).await?;
-    }
 
     let client = hyper_util::client::legacy::Client::builder(
         hyper_util::rt::TokioExecutor::new()

@@ -15,6 +15,7 @@ pub struct GmailConfig {
     #[serde(rename = "cmd_urls")]
     pub cmds: CmdStrings,
     pub urls: AuthUrls,
+    pub grants: Grant,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +41,11 @@ pub struct AuthUrls {
 #[derive(Deserialize)]
 pub struct Metadata {
     pub scopes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct Grant {
+    pub refresh: String,
 }
 
 impl Config {

@@ -17,3 +17,5 @@ async-trait = "0.1"
 time = "0.3.46"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.11+spec-1.1.0"
+reqwest = { version = "0.13", features = ["json"] }
+urlencoding = "2.1"
