@@ -2,7 +2,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use tracing::{info, info_span};
 use google_gmail1::{api::Scope};
-
+use google_gmail1::api::MessagePartHeader;
 
 pub async fn fetch_msgs(
     hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
@@ -17,13 +17,24 @@ pub async fn fetch_msgs(
             .doit()
             .await?;
 
-        info!(mail = ?email, "Fetched mail -> email:");
+        info!(mail = ?email.id, "Fetched mail id:");
+
+        let payload = email.payload.as_ref().unwrap();
+
+        let from = get_headers(payload.headers.as_ref(), "From");
+        info!(from = ?from, "mail From:");
         // if let Some(msg) = &email{
         //     info!(mail = ?email, "Fetched mail -> email:");
         // }
     }
     // return something
     Ok((1))
+}
+
+fn get_headers<'a>(headers: Option<&'a Vec<MessagePartHeader>>, name: &str) -> Option<&'a str> {
+    headers?.iter()
+        .find(|h| h.name.as_deref() == Some(name))
+        .and_then(|h| h.value.as_deref())
 }
 
 pub async fn get_message_ids(
