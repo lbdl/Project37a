@@ -58,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _token = manual_refresh(&cfg).await?;
         tok = _token.access_token;
         ttl = _token.expires_in;
+        let _ = Config::update_access_token(config_dir().join("oath_cli.toml"), &tok)?;
     } else {
         tok = cfg.gmail.tokens.access_token;
         ttl= 3599;
@@ -75,7 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client_x509_cert_url: None,
     };
 
-    // Create authenticator with your existing tokens
     auth = InstalledFlowAuthenticator::builder(
         secret,
         InstalledFlowReturnMethod::HTTPRedirect
@@ -103,41 +103,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
     let fedex_msgs = filter::get_message_ids(&hub, fedex, user).await?;
 
+    filter::fetch_msgs(&hub, &user, maxsoft_msgs).await?;
 
     // TODO refactor the below to use the prefetch m ids from the filter mod
-    let (_, msgs) = hub.users().messages_list(user)
-        .q(maxsoft)
-        .max_results(100)
-        .doit()
-        .await?;
-
-    if let Some(messages) = msgs.messages.as_ref() {
-
-        println!("MSG_ESTIMATE: {:?}", msgs.result_size_estimate);
-
-        for m in messages {
-            let m_id = m.id.clone().unwrap();
-            println!("--->FETCH ID: {}", m.id.clone().unwrap());
-            let (_, email) = hub.users()
-                .messages_get(user, &m_id)
-                .add_scope(Scope::Readonly)
-                .doit()
-                .await?;
-
-            if let Some(payload) = &email.payload {
-                if let Some(headers) = &payload.headers {
-                    for h in headers {
-                        if h.name.as_deref() == Some("From") {
-                            println!("---->FROM: {}", h.value.clone().unwrap_or_default());
-                        }
-                        if h.name.as_deref() == Some("Date") {
-                            println!("---->DATE: {}", h.value.clone().unwrap_or_default());
-                        }
-                    }
-                }
-            }
-        }
-    }
     //TODO given a vec<msg> store this somewhere for analysis
 
     Ok(())

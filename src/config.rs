@@ -1,5 +1,6 @@
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{fs, path::Path};use
+toml_edit::{DocumentMut, value};
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -52,5 +53,15 @@ impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(path)?;
         Ok(toml::from_str(&content)?)
+    }
+
+    pub fn update_access_token(path: impl AsRef<Path>, new_token: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let content = fs::read_to_string(&path)?;
+        let mut doc = content.parse::<DocumentMut>()?;
+
+        doc["gmail_oauth"]["tokens"]["access_token"] = value(new_token);
+
+        fs::write(&path, doc.to_string())?;
+        Ok(())
     }
 }

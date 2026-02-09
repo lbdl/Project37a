@@ -1,6 +1,30 @@
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use tracing::{info, info_span};
+use google_gmail1::{api::Scope};
+
+
+pub async fn fetch_msgs(
+    hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
+                        user: &str,
+                        ids: Vec<String>,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    for id in ids {
+        info!(user = %user, id = %id, "Starting email fetch");
+        let (_, email) = hub.users()
+            .messages_get(user, &id)
+            .add_scope(Scope::Readonly)
+            .doit()
+            .await?;
+
+        info!(mail = ?email, "Fetched mail -> email:");
+        // if let Some(msg) = &email{
+        //     info!(mail = ?email, "Fetched mail -> email:");
+        // }
+    }
+    // return something
+    Ok((1))
+}
 
 pub async fn get_message_ids(
     hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
@@ -16,13 +40,6 @@ fn get_message_ids_recursive<'a>(
     page_token: Option<&'a str>,
     user: &'a str,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error>>> + 'a>> {
-
-    // let span = info_span!(
-    //     "get_message_ids",
-    //     user = %user,
-    //     query = %query,
-    //     has_page_token = page_token.is_some()
-    // );
 
     info!(user = %user, query = %query, has_page_token = page_token.is_some(), "Starting id fetch");
 
