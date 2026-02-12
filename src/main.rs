@@ -2,6 +2,7 @@ mod config;
 mod filter;
 mod simplestore;
 mod simple_refresh;
+mod message_processor;
 
 use google_gmail1::{api::Scope, Gmail};
 use yup_oauth2::{
