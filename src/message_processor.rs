@@ -19,17 +19,16 @@ pub fn get_email_data<'a>(msg: Option<&'a MessagePart>) -> EmailData {
     //we almost certainly never will be simple because we are gmail
     let part = msg.unwrap();
     info!(mime = part.mime_type, "MIME:");
-    let mut msg_data = EmailData::default();
-    msg_data
+    recurse_over_body(part)
 }
 
 fn recurse_over_body<'a>(part: &MessagePart) -> EmailData {
     match part.mime_type.as_deref() {
-        Some("text/plain") => { EmailData::default()}
-        Some("text/html") => {EmailData::default()}
-        Some("application/pdf") => {EmailData::default()}
-        Some(mime) if mime.starts_with("multipart/") => {EmailData::default()}
-        _ => {EmailData::default()}
+        Some("text/plain") => EmailData::default(),
+        Some("text/html") => EmailData::default(),
+        Some("application/pdf") => EmailData::default(),
+        Some(mime) if mime.starts_with("multipart/") => EmailData::default(),
+        _ => EmailData::default(),
     }
 }
 
