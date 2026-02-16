@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = MessageStore::new(&cfg.db_path)?;
 
     let user = "mmsoft.mudit@gmail.com";
-    let maxsoft = "from:*@maxsoft.sg AND after:2025/01/01 AND filename:pdf";
+    let maxsoft = "from:*@maxsoft.sg AND after:2025/11/01 AND filename:pdf";
     let fedex = "from:thicc@fedex.com AND after:2025/01/01";
 
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Store PDF attachments
         for attachment in &msg.attachments {
             if let Some(pdf_data) = &attachment.data {
+                info!(message_id = ?message_id, attachment_id = ?attachment.attachment_id, "STORING ATTACHMENT");
                 let stored_attachment = StoredAttachment {
                     id: None,
                     message_uid: uid.clone(),

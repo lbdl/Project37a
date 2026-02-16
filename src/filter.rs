@@ -39,7 +39,26 @@ pub async fn fetch_msgs(
             "MAIL: "
         );
 
-        let mail_data = mproc::get_email_data(email.payload.as_ref(), id, payload.headers.as_ref());
+        let mail_data =
+            mproc::get_email_data(email.payload.as_ref(), id.clone(), payload.headers.as_ref());
+
+        // Fetch actual PDF data for attachments that only have an attachment_id
+        let mut mail_data = mail_data;
+        for attachment in &mut mail_data.attachments {
+            if attachment.data.is_none() {
+                if let Some(att_id) = &attachment.attachment_id {
+                    info!(filename = %attachment.filename, "Fetching attachment data");
+                    let (_, att) = hub
+                        .users()
+                        .messages_attachments_get(user, &id, att_id)
+                        .add_scope(Scope::Readonly)
+                        .doit()
+                        .await?;
+                    attachment.data = att.data;
+                }
+            }
+        }
+
         emails.push(mail_data);
     }
 
