@@ -1,14 +1,18 @@
 use crate::message_processor as mproc;
+use crate::message_processor::EmailData;
 use google_gmail1::api::{MessagePart, MessagePartHeader, Scope};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use tracing::{info, info_span};
 
+// TODO: change return type to vec of email messages
 pub async fn fetch_msgs(
     hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
     user: &str,
     ids: Vec<String>,
-) -> Result<i64, Box<dyn std::error::Error>> {
+) -> Result<Vec<EmailData>, Box<dyn std::error::Error>> {
+    let mut emails = Vec::new();
+
     for id in ids {
         info!(user = %user, id = %id, "Starting email fetch");
         let (_, email) = hub
@@ -29,37 +33,18 @@ pub async fn fetch_msgs(
 
         info!(
             from = headers.get(0).unwrap_or(&""),
-            subj = headers.get(1).unwrap_or(&""),
-            to = headers.get(2).unwrap_or(&""),
+            // subj = headers.get(1).unwrap_or(&""),
+            // to = headers.get(2).unwrap_or(&""),
             date = headers.get(3).unwrap_or(&""),
-            "mail: "
+            "MAIL: "
         );
+
+        let mail_data = mproc::get_email_data(email.payload.as_ref(), id);
+        emails.push(mail_data);
     }
+
     // return something
-    Ok(1)
-}
-
-fn find_attachments(part: &MessagePart) -> Vec<(String, String)> {
-    let mut attachments = Vec::new();
-
-    if let Some(filename) = &part.filename {
-        if !filename.is_empty() {
-            if let Some(body) = &part.body {
-                if let Some(attachment_id) = &body.attachment_id {
-                    attachments.push((filename.clone(), attachment_id.clone()));
-                }
-            }
-        }
-    }
-
-    // Recurse
-    if let Some(parts) = &part.parts {
-        for sub_part in parts {
-            attachments.extend(find_attachments(sub_part));
-        }
-    }
-
-    attachments
+    Ok(emails)
 }
 
 pub async fn get_message_ids(
