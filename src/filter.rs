@@ -39,7 +39,7 @@ pub async fn fetch_msgs(
             "MAIL: "
         );
 
-        let mail_data = mproc::get_email_data(email.payload.as_ref(), id);
+        let mail_data = mproc::get_email_data(email.payload.as_ref(), id, payload.headers.as_ref());
         emails.push(mail_data);
     }
 

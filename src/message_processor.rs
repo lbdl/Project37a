@@ -4,6 +4,10 @@ use tracing::info;
 #[derive(Default)]
 pub struct EmailData {
     pub message_id: Option<String>,
+    pub date: Option<String>,
+    pub from_addr: Option<String>,
+    pub to_addr: Option<String>,
+    pub subject: Option<String>,
     pub plain: Option<String>,
     pub html: Option<String>,
     pub attachments: Vec<Attachment>,
@@ -15,12 +19,20 @@ pub struct Attachment {
     pub data: Option<Vec<u8>>,         // Inline data if available
 }
 
-pub fn get_email_data<'a>(msg: Option<&'a MessagePart>, message_id: String) -> EmailData {
+pub fn get_email_data<'a>(
+    msg: Option<&'a MessagePart>,
+    message_id: String,
+    headers: Option<&Vec<MessagePartHeader>>,
+) -> EmailData {
     //check msg type are we MIME or simple message
     //we almost certainly never will be simple because we are gmail
     let part = msg.unwrap();
     let mut data = EmailData::default();
     data.message_id = Some(message_id);
+    data.date = get_header(headers, "Date").map(|s| s.to_string());
+    data.from_addr = get_header(headers, "From").map(|s| s.to_string());
+    data.to_addr = get_header(headers, "To").map(|s| s.to_string());
+    data.subject = get_header(headers, "Subject").map(|s| s.to_string());
     info!(mime = part.mime_type, "MIME:");
     recurse_over_body(part, &mut data);
     data

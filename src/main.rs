@@ -1,44 +1,21 @@
 mod config;
 mod filter;
+mod gmail_hub;
 mod message_db;
 mod message_processor;
 mod simple_refresh;
 mod simplestore;
 
-use google_gmail1::{Gmail, api::Scope};
-use yup_oauth2::{
-    ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod, storage::TokenStorage,
-};
-
-use config::Config;
-use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::connect::HttpConnector;
-use simple_refresh::manual_refresh;
-use simplestore::SimpleTokenStore;
-use std::env;
-use std::path::PathBuf;
-use tracing_subscriber;
-use yup_oauth2::authenticator::Authenticator;
-
-use tracing::{info, info_span};
-
-#[cfg(debug_assertions)]
-fn config_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".config")
-}
+use message_db::{MessageStore, StoredAttachment, StoredMessage};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = Config::load(config_dir().join("oath_cli.toml"))?;
-    let auth: Authenticator<HttpsConnector<HttpConnector>>;
-    let tok: String;
-    let ttl: i64;
-
-    //init tracing
+    // init tracing
     tracing_subscriber::fmt()
         .with_target(true)
         .with_level(true)
-        .with_env_filter("info") // or use RUST_LOG env var
+        .with_env_filter("info")
         .init();
 
     // Install crypto provider
@@ -46,65 +23,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
+    let hub = gmail_hub::create_hub().await?;
+    let cfg = config::Config::load(".config/oath_cli.toml")?;
+    let db = MessageStore::new(&cfg.db_path)?;
+
     let user = "mmsoft.mudit@gmail.com";
     let maxsoft = "from:*@maxsoft.sg AND after:2025/01/01 AND filename:pdf";
     let fedex = "from:thicc@fedex.com AND after:2025/01/01";
-
-    // handle manual refreshing we dont really need it but lets be complete
-    // TODO: this should also be extracted somewhere else
-    if env::var("REFRESH").is_ok_and(|v| v == "1") {
-        // Force token fetch/refresh
-        println!("Refreshing....");
-        let _token = manual_refresh(&cfg).await?;
-        tok = _token.access_token;
-        ttl = _token.expires_in;
-        let _ = Config::update_access_token(config_dir().join("oath_cli.toml"), &tok)?;
-    } else {
-        tok = cfg.gmail.tokens.access_token;
-        ttl = 3599;
-    }
-
-    let secret = ApplicationSecret {
-        client_id: cfg.gmail.client_id,
-        client_secret: cfg.gmail.client_secret,
-        token_uri: cfg.gmail.urls.token_url,
-        auth_uri: cfg.gmail.urls.auth_url,
-        redirect_uris: vec!["http://localhost".to_string()],
-        project_id: None,
-        client_email: None,
-        auth_provider_x509_cert_url: None,
-        client_x509_cert_url: None,
-    };
-
-    auth = InstalledFlowAuthenticator::builder(secret, InstalledFlowReturnMethod::HTTPRedirect)
-        .with_storage(Box::new(SimpleTokenStore {
-            access_token: tok,
-            refresh_token: cfg.gmail.tokens.refresh_token,
-            expires_in: ttl,
-        }))
-        .build()
-        .await?;
-
-    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build(
-            hyper_rustls::HttpsConnectorBuilder::new()
-                .with_webpki_roots()
-                .https_or_http()
-                .enable_http1()
-                .build(),
-        );
-
-    let hub = Gmail::new(client, auth);
 
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
     let fedex_msgs = filter::get_message_ids(&hub, fedex, user).await?;
 
     for msg in filter::fetch_msgs(&hub, &user, maxsoft_msgs).await? {
-        info!(id = msg.message_id, "PROCESSED: ");
+        let message_id = msg.message_id.as_ref().unwrap();
+        let unknown = String::from("unknown");
+        let date = msg.date.as_ref().unwrap_or(&unknown);
+
+        // Generate UID and store in database
+        let uid = MessageStore::generate_uid(message_id, date, user);
+
+        let stored_msg = StoredMessage {
+            uid: uid.clone(),
+            message_id: message_id.clone(),
+            user: user.to_string(),
+            date: date.clone(),
+            from_addr: msg.from_addr.clone(),
+            subject: msg.subject.clone(),
+            plain_text: msg.plain.clone(),
+            html: msg.html.clone(),
+            has_attachments: !msg.attachments.is_empty(),
+            is_processed: false,
+        };
+
+        db.upsert_message(&stored_msg)?;
+
+        // Store PDF attachments
+        for attachment in &msg.attachments {
+            if let Some(pdf_data) = &attachment.data {
+                let stored_attachment = StoredAttachment {
+                    id: None,
+                    message_uid: uid.clone(),
+                    filename: attachment.filename.clone(),
+                    attachment_id: attachment.attachment_id.clone(),
+                    pdf_data: pdf_data.clone(),
+                    is_processed: false,
+                };
+                db.insert_attachment(&stored_attachment)?;
+            }
+        }
+
+        info!(uid = %uid, id = %message_id, attachments = msg.attachments.len(), "STORED");
     }
 
-    // TODO refactor the below to use the prefetch m ids from the filter mod
-    //TODO given a vec<msg> store this somewhere for analysis
+    // Print statistics
+    let (total_msgs, processed_msgs, total_pdfs, processed_pdfs) = db.get_counts()?;
+    info!(
+        messages_total = total_msgs,
+        messages_processed = processed_msgs,
+        pdfs_total = total_pdfs,
+        pdfs_processed = processed_pdfs,
+        "Database statistics"
+    );
 
     Ok(())
 }

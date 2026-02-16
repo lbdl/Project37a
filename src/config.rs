@@ -1,11 +1,17 @@
 use serde::Deserialize;
-use std::{fs, path::Path};use
-toml_edit::{DocumentMut, value};
+use std::{fs, path::Path};
+use toml_edit::{DocumentMut, value};
 
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(rename = "gmail_oauth")]
     pub gmail: GmailConfig,
+    #[serde(default = "default_db_path")]
+    pub db_path: String,
+}
+
+fn default_db_path() -> String {
+    "msgstore/messages.db".to_string()
 }
 
 #[derive(Deserialize)]
@@ -55,7 +61,10 @@ impl Config {
         Ok(toml::from_str(&content)?)
     }
 
-    pub fn update_access_token(path: impl AsRef<Path>, new_token: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_access_token(
+        path: impl AsRef<Path>,
+        new_token: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let content = fs::read_to_string(&path)?;
         let mut doc = content.parse::<DocumentMut>()?;
 
