@@ -106,6 +106,8 @@ pub async fn fetch_and_store(
                     attachment_id: attachment.attachment_id.clone(),
                     pdf_data: pdf_data.clone(),
                     is_processed: false,
+                    content_type: None,
+                    extracted_text: None,
                 };
                 db.insert_attachment(&stored_attachment)?;
             }

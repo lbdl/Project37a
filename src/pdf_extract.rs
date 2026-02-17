@@ -132,7 +132,7 @@ pub fn process_pdfs(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Iterate over unprocessed attachments and extract PDF text.
+/// Iterate over unprocessed attachments, classify them, and persist results.
 pub fn run_pdf_extraction(db: &MessageStore) -> Result<(), Box<dyn std::error::Error>> {
     let unprocessed = db.get_unprocessed_attachments()?;
     info!(
@@ -141,23 +141,34 @@ pub fn run_pdf_extraction(db: &MessageStore) -> Result<(), Box<dyn std::error::E
     );
 
     for att in &unprocessed {
+        let att_id = att.id.expect("attachment must have an id from DB");
         let span = tracing::info_span!("pdf", filename = %att.filename);
         let _guard = span.enter();
 
         match extract_text_from_pdf(&att.pdf_data) {
             PdfContent::Text(text) => {
                 info!(chars = text.len(), "Extracted text from PDF");
-                // TODO: parse structured data from `text` (template/heuristic layer)
+                db.set_attachment_extraction(att_id, "text", Some(&text))?;
             }
             PdfContent::ScannedImage => {
                 info!("PDF is scanned — needs OCR / vision model");
-                // TODO: route to OCR or local LLM pipeline
+                db.set_attachment_extraction(att_id, "scanned", None)?;
             }
             PdfContent::Error(e) => {
                 tracing::error!(error = %e, "Failed to process PDF");
+                db.set_attachment_extraction(att_id, "error", Some(&e))?;
             }
         }
     }
+
+    // Summary
+    let text_count = db.get_text_attachments()?.len();
+    let scanned_count = db.get_scanned_attachments()?.len();
+    info!(
+        text = text_count,
+        scanned = scanned_count,
+        "Extraction complete — ready for heuristics / OCR"
+    );
 
     Ok(())
 }
