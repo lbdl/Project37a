@@ -3,10 +3,11 @@ mod filter;
 mod gmail_hub;
 mod message_db;
 mod message_processor;
+mod pdf_extract;
 mod simple_refresh;
 mod simplestore;
 
-use message_db::{MessageStore, StoredAttachment, StoredMessage};
+use message_db::MessageStore;
 use tracing::info;
 
 #[tokio::main]
@@ -18,6 +19,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter("info")
         .init();
 
+    let args: Vec<String> = std::env::args().collect();
+
+    // Dispatch subcommands
+    if args.len() >= 2 && args[1] == "process-pdfs" {
+        let db_path = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("msgstore/messages.db");
+        return pdf_extract::process_pdfs(db_path);
+    }
+
+    // --- Default: full Gmail fetch + process flow ---
     // Install crypto provider
     rustls::crypto::ring::default_provider()
         .install_default()
@@ -34,47 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let maxsoft_msgs = filter::get_message_ids(&hub, maxsoft, user).await?;
     let fedex_msgs = filter::get_message_ids(&hub, fedex, user).await?;
 
-    for msg in filter::fetch_msgs(&hub, &user, maxsoft_msgs).await? {
-        let message_id = msg.message_id.as_ref().unwrap();
-        let unknown = String::from("unknown");
-        let date = msg.date.as_ref().unwrap_or(&unknown);
-
-        // Generate UID and store in database
-        let uid = MessageStore::generate_uid(message_id, date, user);
-
-        let stored_msg = StoredMessage {
-            uid: uid.clone(),
-            message_id: message_id.clone(),
-            user: user.to_string(),
-            date: date.clone(),
-            from_addr: msg.from_addr.clone(),
-            subject: msg.subject.clone(),
-            plain_text: msg.plain.clone(),
-            html: msg.html.clone(),
-            has_attachments: !msg.attachments.is_empty(),
-            is_processed: false,
-        };
-
-        db.upsert_message(&stored_msg)?;
-
-        // Store PDF attachments
-        for attachment in &msg.attachments {
-            if let Some(pdf_data) = &attachment.data {
-                info!(message_id = ?message_id, attachment_id = ?attachment.attachment_id, "STORING ATTACHMENT");
-                let stored_attachment = StoredAttachment {
-                    id: None,
-                    message_uid: uid.clone(),
-                    filename: attachment.filename.clone(),
-                    attachment_id: attachment.attachment_id.clone(),
-                    pdf_data: pdf_data.clone(),
-                    is_processed: false,
-                };
-                db.insert_attachment(&stored_attachment)?;
-            }
-        }
-
-        info!(uid = %uid, id = %message_id, attachments = msg.attachments.len(), "STORED");
-    }
+    filter::fetch_and_store(&hub, user, maxsoft_msgs, &db).await?;
 
     // Print statistics
     let (total_msgs, processed_msgs, total_pdfs, processed_pdfs) = db.get_counts()?;
@@ -85,6 +58,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pdfs_processed = processed_pdfs,
         "Database statistics"
     );
+
+    // Process unprocessed PDF attachments
+    pdf_extract::run_pdf_extraction(&db)?;
 
     Ok(())
 }

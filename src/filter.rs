@@ -1,3 +1,4 @@
+use crate::message_db::{MessageStore, StoredAttachment, StoredMessage};
 use crate::message_processor as mproc;
 use crate::message_processor::EmailData;
 use google_gmail1::api::{MessagePart, MessagePartHeader, Scope};
@@ -5,7 +6,6 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use tracing::{info, info_span};
 
-// TODO: change return type to vec of email messages
 pub async fn fetch_msgs(
     hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
     user: &str,
@@ -61,9 +61,61 @@ pub async fn fetch_msgs(
 
         emails.push(mail_data);
     }
-
-    // return something
     Ok(emails)
+}
+
+/// Fetch messages by IDs, store them (with PDF attachments) in the database, and return the count stored.
+pub async fn fetch_and_store(
+    hub: &google_gmail1::Gmail<HttpsConnector<HttpConnector>>,
+    user: &str,
+    ids: Vec<String>,
+    db: &MessageStore,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let msgs = fetch_msgs(hub, user, ids).await?;
+    let mut count = 0;
+
+    for msg in &msgs {
+        let message_id = msg.message_id.as_ref().unwrap();
+        let unknown = String::from("unknown");
+        let date = msg.date.as_ref().unwrap_or(&unknown);
+
+        let uid = MessageStore::generate_uid(message_id, date, user);
+
+        let stored_msg = StoredMessage {
+            uid: uid.clone(),
+            message_id: message_id.clone(),
+            user: user.to_string(),
+            date: date.clone(),
+            from_addr: msg.from_addr.clone(),
+            subject: msg.subject.clone(),
+            plain_text: msg.plain.clone(),
+            html: msg.html.clone(),
+            has_attachments: !msg.attachments.is_empty(),
+            is_processed: false,
+        };
+
+        db.upsert_message(&stored_msg)?;
+
+        for attachment in &msg.attachments {
+            if let Some(pdf_data) = &attachment.data {
+                info!(message_id = ?message_id, attachment_id = ?attachment.attachment_id, "STORING ATTACHMENT");
+                let stored_attachment = StoredAttachment {
+                    id: None,
+                    message_uid: uid.clone(),
+                    filename: attachment.filename.clone(),
+                    attachment_id: attachment.attachment_id.clone(),
+                    pdf_data: pdf_data.clone(),
+                    is_processed: false,
+                };
+                db.insert_attachment(&stored_attachment)?;
+            }
+        }
+
+        info!(uid = %uid, id = %message_id, attachments = msg.attachments.len(), "STORED");
+        count += 1;
+    }
+
+    Ok(count)
 }
 
 pub async fn get_message_ids(

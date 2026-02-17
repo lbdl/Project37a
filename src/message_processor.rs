@@ -58,7 +58,7 @@ fn recurse_over_body<'a>(part: &MessagePart, content: &mut EmailData) {
                 let attachment = Attachment {
                     filename: filename.clone(),
                     attachment_id: part.body.as_ref().and_then(|b| b.attachment_id.clone()),
-                    data: part.body.as_ref().and_then(|b| b.data.clone()),
+                    data: None, // gmail never puts this inline, it's a second fetch
                 };
                 content.attachments.push(attachment);
             }
