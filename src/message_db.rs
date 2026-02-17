@@ -338,6 +338,20 @@ impl MessageStore {
         attachments.collect()
     }
 
+    /// Get a single attachment by its primary key ID.
+    pub fn get_attachment_by_id(&self, id: i64) -> SqliteResult<Option<StoredAttachment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, message_uid, filename, attachment_id, pdf_data, is_processed, content_type, extracted_text
+             FROM attachments
+             WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(Self::row_to_attachment(row)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Get all attachments for a specific message
     pub fn get_attachments_for_message(
         &self,

@@ -1,5 +1,8 @@
 // src/pdf_extract.rs
 
+use crate::config::{LlmBackend, LlmSection};
+use crate::heuristics;
+use crate::llm_extract;
 use crate::message_db::MessageStore;
 use lopdf::Document;
 use tracing::{info, warn};
@@ -115,7 +118,10 @@ fn looks_like_scanned(doc: &Document) -> bool {
 }
 
 /// Open a DB by path and process all unprocessed PDF attachments.
-pub fn process_pdfs(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn process_pdfs(
+    db_path: &str,
+    llm_config: &LlmSection,
+) -> Result<(), Box<dyn std::error::Error>> {
     info!(db_path = %db_path, "Opening database for PDF processing");
     let db = MessageStore::new(db_path)?;
 
@@ -129,6 +135,115 @@ pub fn process_pdfs(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     run_pdf_extraction(&db)?;
+
+    match llm_config.backend {
+        LlmBackend::Heuristics => {
+            info!("Backend set to heuristics — using regex extraction");
+            run_heuristics(&db)?;
+        }
+        _ => {
+            info!(backend = ?llm_config.backend, "Using LLM-based extraction");
+            match llm_extract::run_llm_extraction(&db, llm_config).await {
+                Ok(()) => {}
+                Err(e) => {
+                    warn!(error = %e, "LLM extraction failed — falling back to heuristics");
+                    run_heuristics(&db)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Test extraction + LLM on a single attachment by its DB id.
+///
+/// Usage: `cargo run -- test-pdf <attachment_id> [db_path]`
+pub async fn test_single_pdf(
+    db_path: &str,
+    att_id: i64,
+    llm_config: &LlmSection,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!(db_path = %db_path, att_id = att_id, "Testing single PDF attachment");
+    let db = MessageStore::new(db_path)?;
+
+    let att = db
+        .get_attachment_by_id(att_id)?
+        .ok_or_else(|| format!("No attachment found with id {att_id}"))?;
+
+    info!(
+        id = att_id,
+        filename = %att.filename,
+        content_type = ?att.content_type,
+        has_text = att.extracted_text.is_some(),
+        pdf_bytes = att.pdf_data.len(),
+        "Loaded attachment from DB"
+    );
+
+    // Phase 1: text extraction (re-run even if already done, for testing)
+    let content = extract_text_from_pdf(&att.pdf_data);
+    let extracted_text = match &content {
+        PdfContent::Text(text) => {
+            info!(chars = text.len(), "Extracted text from PDF");
+            println!("\n--- Extracted Text (first 2000 chars) ---");
+            println!("{}", &text[..text.len().min(2000)]);
+            println!("--- End ---\n");
+            Some(text.as_str())
+        }
+        PdfContent::ScannedImage => {
+            info!("PDF is scanned — no text to extract");
+            println!("\n⚠ PDF is scanned/image-only — cannot extract text.\n");
+            None
+        }
+        PdfContent::Error(e) => {
+            tracing::error!(error = %e, "PDF extraction failed");
+            println!("\n✗ Error: {e}\n");
+            None
+        }
+    };
+
+    let Some(text) = extracted_text else {
+        return Ok(());
+    };
+
+    // Phase 2: heuristic extraction
+    println!("--- Heuristic Extraction ---");
+    let invoice = heuristics::extract_invoice(text);
+    let (filled, total) = invoice.coverage();
+    info!(filled, total, "Heuristic coverage");
+    println!("{}", serde_json::to_string_pretty(&invoice)?);
+    println!("--- End Heuristics ({filled}/{total} fields) ---\n");
+
+    // Phase 3: LLM extraction
+    match llm_config.backend {
+        LlmBackend::Heuristics => {
+            info!("Backend set to heuristics — skipping LLM");
+        }
+        _ => {
+            println!(
+                "--- LLM Extraction ({:?} / {}) ---",
+                llm_config.backend,
+                match llm_config.backend {
+                    LlmBackend::Ollama => &llm_config.ollama.model,
+                    LlmBackend::Cliproxy => &llm_config.cliproxy.model,
+                    LlmBackend::Remote => &llm_config.remote.model,
+                    LlmBackend::Heuristics => unreachable!(),
+                }
+            );
+            match llm_extract::run_llm_extraction_single(text, llm_config).await {
+                Ok(invoice) => {
+                    let (filled, total) = invoice.coverage();
+                    println!("{}", serde_json::to_string_pretty(&invoice)?);
+                    println!("--- End LLM ({filled}/{total} fields) ---\n");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "LLM extraction failed");
+                    println!("✗ LLM error: {e}\n");
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -169,6 +284,80 @@ pub fn run_pdf_extraction(db: &MessageStore) -> Result<(), Box<dyn std::error::E
         scanned = scanned_count,
         "Extraction complete — ready for heuristics / OCR"
     );
+
+    Ok(())
+}
+
+/// Run heuristic extraction on all text-classified attachments.
+pub fn run_heuristics(db: &MessageStore) -> Result<(), Box<dyn std::error::Error>> {
+    let text_attachments = db.get_text_attachments()?;
+    info!(
+        count = text_attachments.len(),
+        "Text attachments for heuristic parsing"
+    );
+
+    for att in &text_attachments {
+        let att_id = att.id.expect("attachment must have an id from DB");
+        let span = tracing::info_span!("heuristics", id = att_id, filename = %att.filename);
+        let _guard = span.enter();
+
+        let Some(ref text) = att.extracted_text else {
+            tracing::warn!("No extracted text despite content_type = text");
+            continue;
+        };
+
+        let invoice = heuristics::extract_invoice(text);
+        let (filled, total) = invoice.coverage();
+        info!(
+            filled = filled,
+            total = total,
+            invoice_no = ?invoice.invoice_no,
+            vendor = ?invoice.vendor,
+            buyer = ?invoice.buyer,
+            total_amount = ?invoice.total_amount,
+            currency = ?invoice.currency,
+            line_items = invoice.line_items.len(),
+            packing_items = invoice.packing_items.len(),
+            "Extraction result"
+        );
+
+        // Log line items
+        for (i, item) in invoice.line_items.iter().enumerate() {
+            info!(
+                idx = i,
+                desc = %item.description,
+                qty = item.qty,
+                unit_price = item.unit_price,
+                amount = item.amount,
+                "Line item"
+            );
+        }
+
+        // Log packing items
+        for (i, item) in invoice.packing_items.iter().enumerate() {
+            info!(
+                idx = i,
+                carton = %item.carton,
+                desc = %item.description,
+                ctns = item.ctns,
+                qty = item.qty,
+                net_wt = item.net_wt_per_ctn,
+                gross_wt = item.gross_wt_per_ctn,
+                measurement = %item.measurement,
+                "Packing item"
+            );
+        }
+
+        if let Some(ref totals) = invoice.packing_totals {
+            info!(
+                cartons = totals.total_cartons,
+                qty = totals.total_qty,
+                net_wt = totals.total_net_wt,
+                gross_wt = totals.total_gross_wt,
+                "Packing totals"
+            );
+        }
+    }
 
     Ok(())
 }
